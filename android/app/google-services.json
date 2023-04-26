@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "600687952329",
+    "project_id": "flutter-projets",
+    "storage_bucket": "flutter-projets.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:600687952329:android:dbbbca6ae6dffc9c2be818",
+        "android_client_info": {
+          "package_name": "com.valeroman.push_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "600687952329-r2cuig0osutuevrj64lvecc1csqie0nj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBqCrs9pB2Mh6uGy31RC-ySHLTcy5s9PkQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "600687952329-r2cuig0osutuevrj64lvecc1csqie0nj.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "600687952329-ato84e3vn6rqn47lt7lht4bv064tpikf.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.valeroman.pushApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
