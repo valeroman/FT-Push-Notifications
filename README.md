@@ -1811,3 +1811,870 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
  }
 
 ```
+
+
+### Local Notifications
+
+Documentación: https://pub.dev/packages/flutter_local_notifications
+
+- Instalación: 
+```
+flutter pub add flutter_local_notifications
+```
+
+- Abrimos el archivo `build.gradle`, que se encuentra en `android -> app` y colocamos el `compileSdkVersion 33`
+
+```java
+android {
+    compileSdkVersion 33            // -> Se agrega esto
+    ndkVersion flutter.ndkVersion
+}
+```
+
+- Creamos el archivo `local_notifications.dart`
+
+```dart
+
+
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+
+class LocalNotifications {
+
+  static Future<void> requestPermissiionLocalNotifications() async {
+    
+    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestPermission();
+  }
+}
+```
+
+- Abrimos el archivo `notifications_bloc` para solicitar el permiso de las local nnotifications
+
+```dart
+import 'dart:io';
+
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:equatable/equatable.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:push_app/config/local_notifications/local_notifications.dart';
+import 'package:push_app/domain/entities/push_message.dart';
+
+import 'package:push_app/firebase_options.dart';
+
+
+
+
+part 'notifications_event.dart';
+part 'notifications_state.dart';
+
+// Cuando la notificación corre en background
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // If you're going to use other Firebase services in the background, such as Firestore,
+  // make sure you call `initializeApp` before using other Firebase services.
+  await Firebase.initializeApp();
+
+  // print("Handling a background message: ${message.messageId}");
+}
+
+
+class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
+
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+  NotificationsBloc() : super(const NotificationsState()) {
+
+    on<NotificationStatusChanged>( _notificationStatusChanged );
+    on<NotificationReceived>( _onPushMessageReceived );
+
+    // * Verificar estados de las notificaciones
+    _initialStatusCheck();
+
+    // * Listener para notificaciones en Foreground
+    _onForegroundMessage();
+  }
+
+  //* Metodos
+  static Future<void> initializeFCM() async {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+  );
+  }
+
+  void _notificationStatusChanged( NotificationStatusChanged  event, Emitter<NotificationsState> emit ) {
+    emit(
+      state.copyWith(
+        status: event.status
+      )
+    );
+
+    _getFCMToken();
+  }
+
+  void _initialStatusCheck() async {
+    final settings = await messaging.getNotificationSettings();
+     add(NotificationStatusChanged(settings.authorizationStatus));
+  }
+
+  void _getFCMToken() async {
+    if ( state.status != AuthorizationStatus.authorized ) return;
+
+    final token = await messaging.getToken();
+    print(token);
+  }
+
+  void _onPushMessageReceived( NotificationReceived event, Emitter<NotificationsState> emit ) async {
+    emit(
+      state.copyWith(
+        notifications: [ event.pushMessage, ...state.notifications ]
+      )
+    );
+  }
+
+  void handleRemoteMessage( RemoteMessage message ) {
+  
+    if (message.notification == null) return;
+
+    final notitication = PushMessage(
+      messageId: message.messageId?.replaceAll(':', '').replaceAll('%', '') ?? '', 
+      title: message.notification!.title ?? '', 
+      body: message.notification!.body ?? '', 
+      sentDate: message.sentTime ?? DateTime.now(),
+      data: message.data,
+      imageUrl: Platform.isAndroid 
+        ? message.notification!.android?.imageUrl 
+        : message.notification!.apple?.imageUrl
+    );
+
+    add(NotificationReceived(notitication));
+  }
+
+  void _onForegroundMessage() {
+    FirebaseMessaging.onMessage.listen(handleRemoteMessage);
+  }
+
+  void requestPermission() async {
+
+    NotificationSettings settings = await messaging.requestPermission(
+      alert: true,
+      announcement: false,
+      badge: true,
+      carPlay: false,
+      criticalAlert: true,
+      provisional: false,
+      sound: true,
+    );
+
+    // * Solicitar permiso a las local notifications    
+    await LocalNotifications.requestPermissiionLocalNotifications();       // ->Se agrega el permiso
+
+    // * Agregar un nuevo emento add(NotificationStatusChanged)
+    add(NotificationStatusChanged(settings.authorizationStatus));
+  }
+
+  PushMessage? getMessageById( String pushMessageId ) {
+
+    final exist = state.notifications.any((element) => element.messageId == pushMessageId);
+    if ( !exist ) return null;
+
+    return state.notifications.firstWhere((element) => element.messageId == pushMessageId);
+  }
+
+ }
+
+```
+
+- Abrimos el archivo `AndroidManifest.xml` y agregamos lo siguiente:
+
+```
+ android:showWhenLocked="true"    
+ android:turnScreenOn="true"
+```
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.valeroman.push_app">
+   <application
+        android:label="push_app"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:showWhenLocked="true"    
+            android:turnScreenOn="true"
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Specifies an Android theme to apply to this Activity as soon as
+                 the Android process has started. This theme is visible to the user
+                 while the Flutter UI initializes. After that, this theme continues
+                 to determine the Window background behind the Flutter UI. -->
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+</manifest>
+
+```
+
+
+#### Configuración - LocalNotifications
+
+- Agregamos las configraciones de Android en el archivo `local_notifications.dart`
+
+```dart
+
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+
+class LocalNotifications {
+
+  static Future<void> requestPermissiionLocalNotifications() async {
+    
+    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestPermission();
+  }
+
+  static Future<void> initializeLocalNotifications() async {
+
+    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+    const initializationSettingsAndroid = AndroidInitializationSettings('app_icon');
+
+    // TODO: ios configuration
+
+    const initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      // TODO: ios configuratiion settings
+    );
+
+    await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      // onDidReceiveBackgroundNotificationResponse: onDidReceiveBackgroundNotificationResponse
+    );
+  }
+
+}
+```
+
+- Abrimos el archivo `main.dart`, para inicializar las notificaciones locales
+
+```dart
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:push_app/config/local_notifications/local_notifications.dart';
+import 'package:push_app/config/router/app_router.dart';
+
+import 'package:push_app/config/theme/app_theme.dart';
+import 'package:push_app/presentation/blocs/notifications/notifications_bloc.dart';
+
+void main() async {
+
+  WidgetsFlutterBinding.ensureInitialized();
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  
+  await NotificationsBloc.initializeFCM();
+  await LocalNotifications.initializeLocalNotifications();      // -> Se agrega la inicialización
+  
+  runApp(
+    MultiBlocProvider(
+      providers: [
+        BlocProvider(
+          create: (_) => NotificationsBloc()
+        )
+      ], 
+      child: const MainApp()
+    )
+  );
+}
+
+class MainApp extends StatelessWidget {
+  const MainApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp.router(
+      routerConfig: appRouter,
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme().getTheme(),
+      builder: (context, child) => HandleNotificationInteraccions(child: child!),
+    );
+  }
+}
+
+class HandleNotificationInteraccions extends StatefulWidget {
+
+  final Widget child;
+
+  const HandleNotificationInteraccions({
+    super.key, 
+    required this.child
+  });
+
+  @override
+  State<HandleNotificationInteraccions> createState() => _HandleNotificationInteraccionsState();
+}
+
+class _HandleNotificationInteraccionsState extends State<HandleNotificationInteraccions> {
+
+  // It is assumed that all messages contain a data field with the key 'type'
+  Future<void> setupInteractedMessage() async {
+    // Get any messages which caused the application to open from
+    // a terminated state.
+    RemoteMessage? initialMessage =
+        await FirebaseMessaging.instance.getInitialMessage();
+
+    // If the message also contains a data property with a "type" of "chat",
+    // navigate to a chat screen
+    if (initialMessage != null) {
+      _handleMessage(initialMessage);
+    }
+
+    // Also handle any interaction when the app is in the background via a
+    // Stream listener
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessage);
+  }
+  
+  void _handleMessage(RemoteMessage message) {
+
+    context.read<NotificationsBloc>().handleRemoteMessage(message);
+
+    final messageId = message.messageId?.replaceAll(':', '').replaceAll('%', '');
+    appRouter.push('/push-details/$messageId');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Run code required to handle interacted messages in an async function
+    // as initState() must not be async
+    setupInteractedMessage();
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
+  }
+}
+
+```
+
+
+#### Mostrar la LocalNotification
+
+- En el archivo `local_notifications.dar`, agregamos el metodo `showLocalNotification`
+
+```dart
+
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+
+class LocalNotifications {
+
+  static Future<void> requestPermissiionLocalNotifications() async {
+    
+    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestPermission();
+  }
+
+  static Future<void> initializeLocalNotifications() async {
+
+    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+    const initializationSettingsAndroid = AndroidInitializationSettings('app_icon');
+
+    // TODO: ios configuration
+
+    const initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      // TODO: ios configuratiion settings
+    );
+
+    await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      // onDidReceiveBackgroundNotificationResponse: onDidReceiveBackgroundNotificationResponse
+    );
+  }
+
+  static void showLocalNotification({       // -> Se agrega el metodo showLocalNotification
+    required int id,
+    String? title,
+    String? body,
+    String? data,
+  }) {
+
+    const androidDetails = AndroidNotificationDetails(
+      'channelId',
+      'channelName',
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('notification'),
+      importance: Importance.max,
+      priority: Priority.high
+    );
+
+    const notificationDetails = NotificationDetails(
+      android: androidDetails,
+      // TODO: IOS
+    );
+
+    final flutterLocalNotificationPlugin = FlutterLocalNotificationsPlugin();
+
+    flutterLocalNotificationPlugin.show(
+      id, 
+      title, 
+      body, 
+      notificationDetails,
+      payload: data
+    );
+
+  }
+ 
+}
+```
+
+- Abrimos el archivo `notifications_bloc.dart`
+
+```dart
+import 'dart:io';
+
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:equatable/equatable.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:push_app/config/local_notifications/local_notifications.dart';
+import 'package:push_app/domain/entities/push_message.dart';
+
+import 'package:push_app/firebase_options.dart';
+
+
+
+
+part 'notifications_event.dart';
+part 'notifications_state.dart';
+
+// Cuando la notificación corre en background
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // If you're going to use other Firebase services in the background, such as Firestore,
+  // make sure you call `initializeApp` before using other Firebase services.
+  await Firebase.initializeApp();
+
+  // print("Handling a background message: ${message.messageId}");
+}
+
+
+class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
+
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+  int pushNumberId = 0;             // -> Se agrego pushNumberId
+
+  NotificationsBloc() : super(const NotificationsState()) {
+
+    on<NotificationStatusChanged>( _notificationStatusChanged );
+    on<NotificationReceived>( _onPushMessageReceived );
+
+    // * Verificar estados de las notificaciones
+    _initialStatusCheck();
+
+    // * Listener para notificaciones en Foreground
+    _onForegroundMessage();
+  }
+
+  //* Metodos
+  static Future<void> initializeFCM() async {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+  );
+  }
+
+  void _notificationStatusChanged( NotificationStatusChanged  event, Emitter<NotificationsState> emit ) {
+    emit(
+      state.copyWith(
+        status: event.status
+      )
+    );
+
+    _getFCMToken();
+  }
+
+  void _initialStatusCheck() async {
+    final settings = await messaging.getNotificationSettings();
+     add(NotificationStatusChanged(settings.authorizationStatus));
+  }
+
+  void _getFCMToken() async {
+    if ( state.status != AuthorizationStatus.authorized ) return;
+
+    final token = await messaging.getToken();
+    print(token);
+  }
+
+  void _onPushMessageReceived( NotificationReceived event, Emitter<NotificationsState> emit ) async {
+    emit(
+      state.copyWith(
+        notifications: [ event.pushMessage, ...state.notifications ]
+      )
+    );
+  }
+
+  void handleRemoteMessage( RemoteMessage message ) {
+  
+    if (message.notification == null) return;
+
+    final notitication = PushMessage(
+      messageId: message.messageId?.replaceAll(':', '').replaceAll('%', '') ?? '', 
+      title: message.notification!.title ?? '', 
+      body: message.notification!.body ?? '', 
+      sentDate: message.sentTime ?? DateTime.now(),
+      data: message.data,
+      imageUrl: Platform.isAndroid 
+        ? message.notification!.android?.imageUrl 
+        : message.notification!.apple?.imageUrl
+    );
+
+    LocalNotifications.showLocalNotification(       // -> Se agrego showLocalNotification
+      id:++pushNumberId,
+      body: notitication.body,
+      data: notitication.data.toString(),
+      title: notitication.title
+    );
+
+    add(NotificationReceived(notitication));
+  }
+
+  void _onForegroundMessage() {
+    FirebaseMessaging.onMessage.listen(handleRemoteMessage);
+  }
+
+  void requestPermission() async {
+
+    NotificationSettings settings = await messaging.requestPermission(
+      alert: true,
+      announcement: false,
+      badge: true,
+      carPlay: false,
+      criticalAlert: true,
+      provisional: false,
+      sound: true,
+    );
+
+    // * Solicitar permiso a las local notifications    
+    await LocalNotifications.requestPermissiionLocalNotifications();
+
+    // * Agregar un nuevo emento add(NotificationStatusChanged)
+    add(NotificationStatusChanged(settings.authorizationStatus));
+  }
+
+  PushMessage? getMessageById( String pushMessageId ) {
+
+    final exist = state.notifications.any((element) => element.messageId == pushMessageId);
+    if ( !exist ) return null;
+
+    return state.notifications.firstWhere((element) => element.messageId == pushMessageId);
+  }
+
+ }
+```
+
+
+#### Evitar dependencias ocultas
+
+- Creamos una nueva propiedad llamada `requestLocalNotificationPermission`, en el archivo `notifications_bloc.dart`
+
+```dart
+import 'dart:io';
+
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:equatable/equatable.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:push_app/config/local_notifications/local_notifications.dart';
+import 'package:push_app/domain/entities/push_message.dart';
+
+import 'package:push_app/firebase_options.dart';
+
+
+part 'notifications_event.dart';
+part 'notifications_state.dart';
+
+// Cuando la notificación corre en background
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // If you're going to use other Firebase services in the background, such as Firestore,
+  // make sure you call `initializeApp` before using other Firebase services.
+  await Firebase.initializeApp();
+
+  // print("Handling a background message: ${message.messageId}");
+}
+
+
+class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
+
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+  int pushNumberId = 0;
+
+// * Nuevas propiedades
+// * Creamos una funtion que retorna un Future<void>
+  final Future<void> Function()? requestLocalNotificationPermission;        // -> Se agrego
+  final void Function({                                                     // -> Se agrego
+    required int id,
+    String? title,
+    String? body,
+    String? data,
+  })? showLocalNotification;
+    
+
+  NotificationsBloc({
+    this.requestLocalNotificationPermission,                                // -> Se agrego
+    this.showLocalNotification                                              // -> Se agrego
+  }) : super(const NotificationsState()) {
+
+    on<NotificationStatusChanged>( _notificationStatusChanged );
+    on<NotificationReceived>( _onPushMessageReceived );
+
+    // * Verificar estados de las notificaciones
+    _initialStatusCheck();
+
+    // * Listener para notificaciones en Foreground
+    _onForegroundMessage();
+  }
+
+  //* Metodos
+  static Future<void> initializeFCM() async {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+  );
+  }
+
+  void _notificationStatusChanged( NotificationStatusChanged  event, Emitter<NotificationsState> emit ) {
+    emit(
+      state.copyWith(
+        status: event.status
+      )
+    );
+
+    _getFCMToken();
+  }
+
+  void _initialStatusCheck() async {
+    final settings = await messaging.getNotificationSettings();
+     add(NotificationStatusChanged(settings.authorizationStatus));
+  }
+
+  void _getFCMToken() async {
+    if ( state.status != AuthorizationStatus.authorized ) return;
+
+    final token = await messaging.getToken();
+    print(token);
+  }
+
+  void _onPushMessageReceived( NotificationReceived event, Emitter<NotificationsState> emit ) async {
+    emit(
+      state.copyWith(
+        notifications: [ event.pushMessage, ...state.notifications ]
+      )
+    );
+  }
+
+  void handleRemoteMessage( RemoteMessage message ) {
+  
+    if (message.notification == null) return;
+
+    final notitication = PushMessage(
+      messageId: message.messageId?.replaceAll(':', '').replaceAll('%', '') ?? '', 
+      title: message.notification!.title ?? '', 
+      body: message.notification!.body ?? '', 
+      sentDate: message.sentTime ?? DateTime.now(),
+      data: message.data,
+      imageUrl: Platform.isAndroid 
+        ? message.notification!.android?.imageUrl 
+        : message.notification!.apple?.imageUrl
+    );
+
+    if ( showLocalNotification != null ) {          // -> Se agrego
+      showLocalNotification!(
+        id:++pushNumberId,
+        body: notitication.body,
+        data: notitication.data.toString(),
+        title: notitication.title
+      );
+    }
+
+
+    add(NotificationReceived(notitication));
+  }
+
+  void _onForegroundMessage() {
+    FirebaseMessaging.onMessage.listen(handleRemoteMessage);
+  }
+
+  void requestPermission() async {
+
+    NotificationSettings settings = await messaging.requestPermission(
+      alert: true,
+      announcement: false,
+      badge: true,
+      carPlay: false,
+      criticalAlert: true,
+      provisional: false,
+      sound: true,
+    );
+
+    // * Solicitar permiso a las local notifications
+    if( requestLocalNotificationPermission != null ) {      // -> Se agrego
+      await requestLocalNotificationPermission!();
+      // await LocalNotifications.requestPermissiionLocalNotifications();
+    }    
+
+    // * Agregar un nuevo emento add(NotificationStatusChanged)
+    add(NotificationStatusChanged(settings.authorizationStatus));
+  }
+
+  PushMessage? getMessageById( String pushMessageId ) {
+
+    final exist = state.notifications.any((element) => element.messageId == pushMessageId);
+    if ( !exist ) return null;
+
+    return state.notifications.firstWhere((element) => element.messageId == pushMessageId);
+  }
+
+ }
+
+```
+
+- En el archivo `main.dart`
+
+```dart
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:push_app/config/local_notifications/local_notifications.dart';
+import 'package:push_app/config/router/app_router.dart';
+
+import 'package:push_app/config/theme/app_theme.dart';
+import 'package:push_app/presentation/blocs/notifications/notifications_bloc.dart';
+
+void main() async {
+
+  WidgetsFlutterBinding.ensureInitialized();
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  
+  await NotificationsBloc.initializeFCM();
+  await LocalNotifications.initializeLocalNotifications();
+  
+  runApp(
+    MultiBlocProvider(
+      providers: [
+        BlocProvider(
+          create: (_) => NotificationsBloc(
+            requestLocalNotificationPermission: LocalNotifications.requestPermissionLocalNotifications,     // -> Se agrego
+            showLocalNotification: LocalNotifications.showLocalNotification     // -> Se agrego
+          )
+        )
+      ], 
+      child: const MainApp()
+    )
+  );
+}
+
+class MainApp extends StatelessWidget {
+  const MainApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp.router(
+      routerConfig: appRouter,
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme().getTheme(),
+      builder: (context, child) => HandleNotificationInteraccions(child: child!),
+    );
+  }
+}
+
+class HandleNotificationInteraccions extends StatefulWidget {
+
+  final Widget child;
+
+  const HandleNotificationInteraccions({
+    super.key, 
+    required this.child
+  });
+
+  @override
+  State<HandleNotificationInteraccions> createState() => _HandleNotificationInteraccionsState();
+}
+
+class _HandleNotificationInteraccionsState extends State<HandleNotificationInteraccions> {
+
+  // It is assumed that all messages contain a data field with the key 'type'
+  Future<void> setupInteractedMessage() async {
+    // Get any messages which caused the application to open from
+    // a terminated state.
+    RemoteMessage? initialMessage =
+        await FirebaseMessaging.instance.getInitialMessage();
+
+    // If the message also contains a data property with a "type" of "chat",
+    // navigate to a chat screen
+    if (initialMessage != null) {
+      _handleMessage(initialMessage);
+    }
+
+    // Also handle any interaction when the app is in the background via a
+    // Stream listener
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessage);
+  }
+  
+  void _handleMessage(RemoteMessage message) {
+
+    context.read<NotificationsBloc>().handleRemoteMessage(message);
+
+    final messageId = message.messageId?.replaceAll(':', '').replaceAll('%', '');
+    appRouter.push('/push-details/$messageId');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Run code required to handle interacted messages in an async function
+    // as initState() must not be async
+    setupInteractedMessage();
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
+  }
+}
+
+
+```
+
+
+#### Reaccionar al tocar una Local Notification
+

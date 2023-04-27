@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:push_app/config/local_notifications/local_notifications.dart';
 import 'package:push_app/domain/entities/push_message.dart';
 
 import 'package:push_app/firebase_options.dart';
@@ -28,7 +29,23 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
 
   FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-  NotificationsBloc() : super(const NotificationsState()) {
+  int pushNumberId = 0;
+
+// * Nuevas propiedades
+// * Creamos una funtion que retorna un Future<void>
+  final Future<void> Function()? requestLocalNotificationPermission;
+  final void Function({
+    required int id,
+    String? title,
+    String? body,
+    String? data,
+  })? showLocalNotification;
+    
+
+  NotificationsBloc({
+    this.requestLocalNotificationPermission,
+    this.showLocalNotification
+  }) : super(const NotificationsState()) {
 
     on<NotificationStatusChanged>( _notificationStatusChanged );
     on<NotificationReceived>( _onPushMessageReceived );
@@ -92,6 +109,16 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
         : message.notification!.apple?.imageUrl
     );
 
+    if ( showLocalNotification != null ) {
+      showLocalNotification!(
+        id:++pushNumberId,
+        body: notitication.body,
+        data: notitication.messageId,
+        title: notitication.title
+      );
+    }
+
+
     add(NotificationReceived(notitication));
   }
 
@@ -110,6 +137,12 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
       provisional: false,
       sound: true,
     );
+
+    // * Solicitar permiso a las local notifications
+    if( requestLocalNotificationPermission != null ) {
+      await requestLocalNotificationPermission!();
+      // await LocalNotifications.requestPermissiionLocalNotifications();
+    }    
 
     // * Agregar un nuevo emento add(NotificationStatusChanged)
     add(NotificationStatusChanged(settings.authorizationStatus));
